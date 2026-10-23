@@ -3,7 +3,8 @@ import { btnPrimary, btnSecondary, Field, inputClass } from "./ui";
 import { newId } from "../lib/ids";
 import { nextInvoiceNumber } from "../lib/invoiceNumber";
 import { parseNairaToKobo, parseQuantity } from "../lib/money";
-import { PAYMENT_METHODS, type AppData, type Invoice, type LineItem} from "../lib/types";
+import { CURRENCIES, PAYMENT_METHODS, type AppData, type Currency, type Invoice, type LineItem } from "../lib/types";
+import { validatePaymentLink } from "../lib/receipt";
 import { paymentMethodLabel } from "../lib/labels";
 import { todayISO } from "../lib/dates";
 
@@ -27,6 +28,9 @@ export function InvoiceForm({ data, initial, onSave, onCancel }: Props) {
     initial?.items.map((i) => ({ id: i.id, description: i.description, quantity: String(i.quantity), unit: String(i.unitPriceKobo / 100) })) ??
       [{ id: newId(), description: "", quantity: "1", unit: "" }],
   );
+  const [currency, setCurrency] = useState<Currency>(initial?.currency ?? "NGN");
+  const [paymentLink, setPaymentLink] = useState(initial?.paymentLink ?? "");
+  const [monthlyTemplate, setMonthlyTemplate] = useState(initial?.monthlyTemplate ?? false);
   const [error, setError] = useState("");
 
   function setRow(id: string, patch: Partial<Row>) {
@@ -47,6 +51,8 @@ export function InvoiceForm({ data, initial, onSave, onCancel }: Props) {
       items.push({ id: r.id, description: r.description.trim(), quantity: q, unitPriceKobo: u });
     }
     if (items.length === 0) return setError("Add at least one line.");
+    const link = validatePaymentLink(paymentLink);
+    if (!link.ok) return setError(link.error);
     const number = initial?.number ?? nextInvoiceNumber(data.invoices.map((i) => i.number), Number(issueDate.slice(0, 4)));
     onSave({
       id: initial?.id ?? newId(),
@@ -60,6 +66,10 @@ export function InvoiceForm({ data, initial, onSave, onCancel }: Props) {
       paidDate: initial?.paidDate,
       paymentMethod: initial?.paymentMethod,
       notes,
+      currency,
+      paymentLink: link.value || undefined,
+      monthlyTemplate: monthlyTemplate || undefined,
+      generatedFrom: initial?.generatedFrom,
     });
   }
 
@@ -92,6 +102,18 @@ export function InvoiceForm({ data, initial, onSave, onCancel }: Props) {
       </div>
       <label className="flex items-center gap-2 text-sm">
         <input type="checkbox" checked={withVat} onChange={(e) => setWithVat(e.target.checked)} /> Add VAT (7.5%)
+      </label>
+      <Field label="Currency">
+        <select className={inputClass} value={currency} onChange={(e) => setCurrency(e.target.value as Currency)}>
+          {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+      </Field>
+      <p className="text-xs text-stone-500">Enter unit prices in the invoice currency. Naira equivalents use the rates in Settings.</p>
+      <Field label="Payment link (optional, Paystack or Flutterwave)">
+        <input className={inputClass} inputMode="url" placeholder="https://paystack.com/pay/..." value={paymentLink} onChange={(e) => setPaymentLink(e.target.value)} />
+      </Field>
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={monthlyTemplate} onChange={(e) => setMonthlyTemplate(e.target.checked)} /> Monthly template (generate a copy each month)
       </label>
       <Field label="Notes (optional)">
         <textarea className={inputClass} rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />

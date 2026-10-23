@@ -14,12 +14,13 @@ import { useAppData } from "./hooks/useAppData";
 import { useTheme } from "./hooks/useTheme";
 import { addMonths, daysBetween, formatDate, formatMonth, isOverdue, monthKey, todayISO } from "./lib/dates";
 import { formatNaira, setDisplayFormat } from "./lib/money";
+import { DEFAULT_FX, rateTable } from "./lib/fx";
 import { paymentMethodLabel } from "./lib/labels";
 import { categoryTotals, dashboardTotals, invoiceTotalKobo, monthlySummary } from "./lib/summary";
 import { cloneTemplate, hasGeneratedFor, templatesDue } from "./lib/recurring";
 import { saveLastExport, backupDue, daysSinceExport, loadLastExport } from "./lib/backup";
 import { exportJSON, parseImport } from "./lib/storage";
-import { PAYMENT_METHODS, type AppData, type Client, type Invoice, type PaymentMethod } from "./lib/types";
+import { PAYMENT_METHODS, type AppData, type Client, type FxRates, type Invoice, type PaymentMethod } from "./lib/types";
 import { newId } from "./lib/ids";
 import { loadSettings, saveSettings, type AssistantSettings } from "./lib/assistant/llm";
 
@@ -63,8 +64,9 @@ export default function App() {
   const [nowMs] = useState(() => Date.now());
   const lastExport = useMemo(() => loadLastExport(), []);
   const hasData = data.invoices.length + data.expenses.length + data.incomes.length + data.clients.length > 0;
-  const showBackupBanner = backupDue(lastExport, nowMs, hasData);
-  const daysSince = daysSinceExport(lastExport, nowMs);
+  const [exportedAt, setExportedAt] = useState<string | null>(null);
+  const showBackupBanner = backupDue(exportedAt ?? lastExport, nowMs, hasData);
+  const daysSince = daysSinceExport(exportedAt ?? lastExport, nowMs);
 
   const today = todayISO();
   const month = monthKey(today);
@@ -98,7 +100,13 @@ export default function App() {
     a.download = `mercureal-invoice-${today}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    saveLastExport(new Date().toISOString());
+    const stamp = new Date().toISOString();
+    saveLastExport(stamp);
+    setExportedAt(stamp);
+  }
+
+  function saveFxRates(next: FxRates) {
+    update((d) => ({ ...d, fxRates: next }));
   }
 
   function generateTemplate(id: string) {
@@ -314,6 +322,11 @@ export default function App() {
               <p className="text-xs text-stone-500">Display only. Stored amounts keep full kobo precision.</p>
             </div>
             <div className={card + " space-y-3"}>
+              <h2 className="font-semibold">Naira rates for foreign invoices</h2>
+              <p className="text-xs text-stone-500">Naira per 1 unit. Used for naira-equivalent totals and VAT reports. Update these when the rate moves.</p>
+              <FxRatesEditor current={data.fxRates} onSave={saveFxRates} />
+            </div>
+            <div className={card + " space-y-3"}>
               <h2 className="font-semibold">Data</h2>
               <p className="text-sm text-stone-600 dark:text-stone-300">Your data is stored only in this browser. Export a backup regularly.</p>
               <div className="flex flex-wrap gap-2">
@@ -328,6 +341,35 @@ export default function App() {
           </section>
         )}
       </main>
+    </div>
+  );
+}
+
+function FxRatesEditor({ current, onSave }: { current?: FxRates; onSave: (r: FxRates) => void }) {
+  const effective = rateTable(current);
+  const [draft, setDraft] = useState<Record<"USD" | "GBP" | "EUR", string>>({ USD: String(effective.USD), GBP: String(effective.GBP), EUR: String(effective.EUR) });
+  const [msg, setMsg] = useState("");
+  function save() {
+    const next: FxRates = {};
+    for (const c of ["USD", "GBP", "EUR"] as const) {
+      const n = Number(draft[c]);
+      if (!Number.isFinite(n) || n <= 0) return setMsg(`${c} rate must be a number above zero.`);
+      next[c] = n;
+    }
+    onSave(next);
+    setMsg("Saved.");
+  }
+  return (
+    <div className="space-y-2">
+      {(["USD", "GBP", "EUR"] as const).map((c) => (
+        <Field key={c} label={`${c} to NGN (default ${DEFAULT_FX[c]})`}>
+          <input className={inputClass} inputMode="decimal" value={draft[c]} onChange={(e) => setDraft((d) => ({ ...d, [c]: e.target.value }))} />
+        </Field>
+      ))}
+      <div className="flex items-center gap-2">
+        <button type="button" className={btnPrimary} onClick={save}>Save rates</button>
+        {msg && <span className="text-sm text-stone-600">{msg}</span>}
+      </div>
     </div>
   );
 }
