@@ -2,27 +2,40 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
-@media print {
-  body * {
-    visibility: hidden;
-  }
-  #print-area,
-  #print-area * {
-    visibility: visible;
-  }
-  #print-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    color: #000;
-    background: #fff;
-  }
-  .no-print {
-    display: none !important;
-  }
+/* Glassmorphism base: soft gradient backdrop so the frosted panels have something to blur. */
+.app-bg {
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(16, 185, 129, 0.18), transparent 60%),
+    radial-gradient(800px 500px at 110% 10%, rgba(99, 102, 241, 0.14), transparent 60%),
+    linear-gradient(180deg, #f5f7f6 0%, #eef2f0 100%);
+  background-attachment: fixed;
+}
+.dark .app-bg,
+html.dark .app-bg {
+  background:
+    radial-gradient(900px 500px at 10% -10%, rgba(16, 185, 129, 0.22), transparent 60%),
+    radial-gradient(800px 500px at 110% 10%, rgba(99, 102, 241, 0.18), transparent 60%),
+    linear-gradient(180deg, #0b0f0e 0%, #0e1412 100%);
+  background-attachment: fixed;
 }
 
-@page {
-  margin: 16mm;
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
+html, body { overflow-x: hidden; -webkit-text-size-adjust: 100%; }
+body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+
+/* 16px inputs stop iOS/Android zoom-on-focus; 44px targets for touch. */
+input, select, textarea, button { font-size: 16px; }
+button, select, a, input, textarea { min-height: 44px; }
+input[type=checkbox], input[type=radio] { min-height: 44px; min-width: 44px; }
+
+@media print {
+  body * { visibility: hidden; }
+  #print-area, #print-area * { visibility: visible; }
+  #print-area { position: absolute; left: 0; top: 0; width: 100%; color: #000; background: #fff; }
+  .no-print { display: none !important; }
+  .app-bg { background: #fff !important; }
 }
+
+@page { margin: 16mm; }

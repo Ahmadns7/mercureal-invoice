@@ -10,13 +10,33 @@ export function parseNairaToKobo(input: string): number | null {
   return Number(whole) * 100 + Number(frac.padEnd(2, "0"));
 }
 
-/** Format integer kobo as "₦1,250.50". */
+export interface DisplayFormat {
+  symbol: "₦" | "NGN " | "N";
+  wholeUnits: boolean;
+}
+
+let display: DisplayFormat = { symbol: "₦", wholeUnits: false };
+
+/** Only changes how amounts look. Stored values stay integer kobo. */
+export function setDisplayFormat(f: DisplayFormat): void {
+  display = f;
+}
+
+/** Kobo to major units (naira) as a plain number, for the assistant summary and charts. */
+export function koboToMajor(kobo: number): number {
+  return Math.round(kobo) / 100;
+}
+
+/** Format integer kobo as "₦1,250.50" (or per the display preference). */
 export function formatNaira(kobo: number): string {
   const sign = kobo < 0 ? "-" : "";
   const abs = Math.abs(Math.round(kobo));
   const whole = Math.floor(abs / 100);
   const frac = String(abs % 100).padStart(2, "0");
-  return `${sign}₦${whole.toLocaleString("en-US")}.${frac}`;
+  const body = display.wholeUnits
+    ? Math.round(abs / 100).toLocaleString("en-US")
+    : `${whole.toLocaleString("en-US")}.${frac}`;
+  return `${sign}${display.symbol}${body}`;
 }
 
 /** Parse a quantity string. Must be a positive whole or decimal number. */

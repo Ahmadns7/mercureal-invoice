@@ -5,7 +5,7 @@ import { isValidISODate } from "./dates";
 export const STORAGE_KEY = "mercureal-invoice:v1";
 
 export function emptyData(): AppData {
-  return { version: 1, clients: [], invoices: [], expenses: [] };
+  return { version: 1, clients: [], invoices: [], expenses: [], incomes: [], budgets: {} };
 }
 
 export function loadData(storage: Storage = localStorage): AppData {
@@ -41,6 +41,10 @@ export function parseImport(text: string): AppData | null {
   if (!Array.isArray(d.clients) || !Array.isArray(d.invoices) || !Array.isArray(d.expenses)) {
     return null;
   }
+  // Older backups have no incomes/budgets: default them rather than reject.
+  if (d.incomes === undefined) d.incomes = [];
+  if (d.budgets === undefined) d.budgets = {};
+  if (!Array.isArray(d.incomes) || typeof d.budgets !== "object" || d.budgets === null) return null;
   for (const i of d.invoices as Record<string, unknown>[]) {
     if (typeof i.id !== "string" || typeof i.number !== "string") return null;
     if (typeof i.issueDate !== "string" || !isValidISODate(i.issueDate)) return null;

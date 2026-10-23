@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 const KEY = "mercureal-invoice:theme";
 export type Theme = "light" | "dark";
 
+/** Dark is the default; the toggle persists the user's choice. */
 function initial(): Theme {
   const saved = localStorage.getItem(KEY);
-  if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return saved === "light" ? "light" : "dark";
 }
 
 export function useTheme() {

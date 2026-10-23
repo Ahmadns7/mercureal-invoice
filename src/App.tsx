@@ -1,37 +1,68 @@
 import { useState } from "react";
 import { InvoiceForm } from "./components/InvoiceForm";
 import { InvoiceView } from "./components/InvoiceView";
-import { EmptyState, Field, StatCard, btnDanger, btnPrimary, btnSecondary, card, inputClass } from "./components/ui";
+import { AskMyBooks } from "./components/AskMyBooks";
+import { BudgetPanel } from "./components/Budgets";
+import { ClientStatementView } from "./components/ClientStatement";
+import { CategoryDonut, IncomeExpenseChart } from "./components/Charts";
+import { EntriesPanel } from "./components/RecurringForm";
+import { Badge, EmptyState, Field, StatCard, btnDanger, btnPrimary, btnSecondary, card, inputClass } from "./components/ui";
 import { useAppData } from "./hooks/useAppData";
 import { useTheme } from "./hooks/useTheme";
-import { formatDate, formatMonth, isOverdue, todayISO, monthKey } from "./lib/dates";
-import { formatNaira, parseNairaToKobo } from "./lib/money";
+import { addMonths, daysBetween, formatDate, formatMonth, isOverdue, monthKey, todayISO } from "./lib/dates";
+import { formatNaira, setDisplayFormat } from "./lib/money";
 import { paymentMethodLabel } from "./lib/labels";
-import { dashboardTotals, invoiceTotalKobo, monthlySummary } from "./lib/summary";
+import { categoryTotals, dashboardTotals, invoiceTotalKobo, monthlySummary } from "./lib/summary";
 import { exportJSON, parseImport } from "./lib/storage";
+import { PAYMENT_METHODS, type AppData, type Client, type Invoice, type PaymentMethod } from "./lib/types";
 import { newId } from "./lib/ids";
-import { EXPENSE_CATEGORIES, PAYMENT_METHODS, type AppData, type Client, type Expense, type Invoice, type PaymentMethod } from "./lib/types";
+import { loadSettings, saveSettings, type AssistantSettings } from "./lib/assistant/llm";
 
-type Tab = "home" | "invoices" | "clients" | "expenses" | "monthly" | "settings";
+type Tab = "home" | "invoices" | "clients" | "expenses" | "monthly" | "ask" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "home", label: "Home" },
   { id: "invoices", label: "Invoices" },
   { id: "clients", label: "Clients" },
   { id: "expenses", label: "Expenses" },
   { id: "monthly", label: "Monthly" },
+  { id: "ask", label: "Ask my books" },
   { id: "settings", label: "Settings" },
 ];
+
+type Currency = "naira" | "naira-whole";
+const PREFS_KEY = "mercureal-invoice:prefs";
+interface Prefs { currency: Currency }
+function loadPrefs(): Prefs {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (raw) return { currency: (JSON.parse(raw) as Prefs).currency === "naira-whole" ? "naira-whole" : "naira" };
+  } catch { /* fall through */ }
+  return { currency: "naira" };
+}
+function applyPrefs(p: Prefs) {
+  setDisplayFormat(p.currency === "naira-whole" ? { symbol: "NGN ", wholeUnits: true } : { symbol: "₦", wholeUnits: false });
+}
 
 export default function App() {
   const { data, update, replace } = useAppData();
   const { theme, toggle } = useTheme();
+  const [prefs, setPrefs] = useState<Prefs>(() => { const p = loadPrefs(); applyPrefs(p); return p; });
+  const [settings, setSettings] = useState<AssistantSettings>(() => loadSettings());
   const [tab, setTab] = useState<Tab>("home");
   const [editing, setEditing] = useState<Invoice | "new" | null>(null);
   const [viewing, setViewing] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"all" | "overdue">("all");
   const [importError, setImportError] = useState("");
 
   const today = todayISO();
+  const month = monthKey(today);
   const totals = dashboardTotals(data, today);
+
+  function changePrefs(p: Prefs) {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+    applyPrefs(p);
+    setPrefs(p);
+  }
 
   function saveInvoice(inv: Invoice) {
     update((d) => ({ ...d, invoices: d.invoices.some((i) => i.id === inv.id) ? d.invoices.map((i) => (i.id === inv.id ? inv : i)) : [inv, ...d.invoices] }));
@@ -67,18 +98,23 @@ export default function App() {
 
   const clientName = (id: string) => data.clients.find((c) => c.id === id)?.name ?? "Unknown client";
   const viewingInv = viewing ? data.invoices.find((i) => i.id === viewing) : undefined;
+  const overdueCount = data.invoices.filter((i) => isOverdue(i.dueDate, i.status, today)).length;
+  const visibleInvoices = filter === "overdue" ? data.invoices.filter((i) => isOverdue(i.dueDate, i.status, today)) : data.invoices;
+  const summaryRows = monthlySummary(data);
+  const chartRows = summaryRows.slice(0, 6).reverse();
+  const cats = categoryTotals(data, [addMonths(month, -2), addMonths(month, -1), month]);
 
   return (
-    <div className="min-h-screen bg-stone-50 text-stone-900 dark:bg-stone-950 dark:text-stone-100">
-      <header className="no-print sticky top-0 z-10 border-b border-stone-200 bg-white/90 backdrop-blur dark:border-stone-800 dark:bg-stone-900/90">
+    <div className="app-bg min-h-screen text-stone-900 dark:text-stone-100">
+      <header className="no-print sticky top-0 z-20 border-b border-white/30 bg-white/60 backdrop-blur-xl dark:border-white/10 dark:bg-stone-950/60">
         <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
-          <div className="font-bold text-emerald-700 dark:text-emerald-400">MercuReal Invoice</div>
-          <button className={btnSecondary} onClick={toggle} aria-label="Toggle dark mode">{theme === "dark" ? "Light" : "Dark"}</button>
+          <div className="font-bold tracking-tight text-emerald-700 dark:text-emerald-300">MercuReal Invoice</div>
+          <button className={btnSecondary} onClick={toggle} aria-label="Toggle dark mode">{theme === "dark" ? "Light mode" : "Dark mode"}</button>
         </div>
         <nav className="mx-auto flex max-w-5xl gap-1 overflow-x-auto px-2 pb-2">
           {TABS.map((t) => (
             <button key={t.id} onClick={() => { setTab(t.id); setEditing(null); setViewing(null); }}
-              className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm ${tab === t.id ? "bg-emerald-600 text-white" : "text-stone-600 hover:bg-stone-100 dark:text-stone-300 dark:hover:bg-stone-800"}`}>
+              className={`min-h-11 whitespace-nowrap rounded-xl px-4 text-sm transition ${tab === t.id ? "bg-emerald-600 text-white shadow-lg shadow-emerald-600/30" : "text-stone-600 hover:bg-white/60 dark:text-stone-300 dark:hover:bg-white/10"}`}>
               {t.label}
             </button>
           ))}
@@ -88,7 +124,10 @@ export default function App() {
       <main className="mx-auto max-w-5xl space-y-4 p-4">
         {tab === "home" && (
           <section className="space-y-4">
-            <h1 className="text-xl font-semibold">This month, {formatMonth(monthKey(today))}</h1>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">This month, {formatMonth(month)}</h1>
+              {overdueCount > 0 && <Badge tone="bad">{overdueCount} overdue</Badge>}
+            </div>
             <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
               <StatCard label="Invoiced" value={formatNaira(totals.invoicedKobo)} />
               <StatCard label="Paid" value={formatNaira(totals.paidKobo)} tone="good" />
@@ -96,27 +135,38 @@ export default function App() {
               <StatCard label="Expenses" value={formatNaira(totals.expensesKobo)} />
               <StatCard label="Profit (cash)" value={formatNaira(totals.profitKobo)} tone={totals.profitKobo >= 0 ? "good" : "bad"} />
             </div>
-            <p className="text-xs text-stone-500">Profit is payments received this month minus expenses logged this month.</p>
+            <p className="text-xs text-stone-500">Profit is payments and other income received this month minus expenses for this month. Recurring entries count every month they cover.</p>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className={card}><h2 className="mb-2 font-semibold">Income vs expenses</h2><IncomeExpenseChart rows={chartRows} /></div>
+              <div className={card}><h2 className="mb-2 font-semibold">Spending by category (last 3 months)</h2><CategoryDonut slices={cats.map((c) => ({ label: c.category, kobo: c.kobo }))} /></div>
+            </div>
           </section>
         )}
 
         {tab === "invoices" && !editing && !viewingInv && (
           <section className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h1 className="text-xl font-semibold">Invoices</h1>
-              <button className={btnPrimary} onClick={() => setEditing("new")} disabled={data.clients.length === 0}>New invoice</button>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">Invoices</h1>
+              <div className="flex gap-2">
+                <select className={inputClass + " !w-auto"} value={filter} onChange={(e) => setFilter(e.target.value as "all" | "overdue")} aria-label="Filter invoices">
+                  <option value="all">All</option>
+                  <option value="overdue">Overdue ({overdueCount})</option>
+                </select>
+                <button className={btnPrimary} onClick={() => setEditing("new")} disabled={data.clients.length === 0}>New invoice</button>
+              </div>
             </div>
             {data.invoices.length === 0 && <EmptyState text="No invoices yet. Add a client, then create your first invoice." />}
-            {data.invoices.map((inv) => {
+            {visibleInvoices.length === 0 && data.invoices.length > 0 && <EmptyState text="No overdue invoices. Nice." />}
+            {visibleInvoices.map((inv) => {
               const overdue = isOverdue(inv.dueDate, inv.status, today);
               return (
                 <div key={inv.id} className={card}>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div>
-                      <div className="font-medium">{inv.number} · {clientName(inv.clientId)}</div>
+                      <div className="flex flex-wrap items-center gap-2 font-medium">{inv.number} · {clientName(inv.clientId)} {overdue && <Badge tone="bad">Overdue {daysBetween(inv.dueDate, today)}d</Badge>}</div>
                       <div className="text-sm text-stone-500">Due {formatDate(inv.dueDate)} · {formatNaira(invoiceTotalKobo(inv))}</div>
                       <div className="text-xs">
-                        {inv.status === "paid" ? <span className="text-emerald-700 dark:text-emerald-400">Paid {inv.paidDate ? formatDate(inv.paidDate) : ""} via {paymentMethodLabel(inv.paymentMethod)}</span> : overdue ? <span className="text-red-600">Overdue</span> : <span className="text-stone-500">Unpaid</span>}
+                        {inv.status === "paid" ? <span className="text-emerald-700 dark:text-emerald-400">Paid {inv.paidDate ? formatDate(inv.paidDate) : ""} via {paymentMethodLabel(inv.paymentMethod)}</span> : <span className="text-stone-500">Unpaid</span>}
                       </div>
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -155,31 +205,53 @@ export default function App() {
           </section>
         )}
 
-        {tab === "clients" && <ClientsPanel data={data} update={update} />}
-        {tab === "expenses" && <ExpensesPanel data={data} update={update} />}
+        {tab === "clients" && <ClientsPanel data={data} update={update} today={today} />}
+        {tab === "expenses" && (
+          <section className="space-y-6">
+            <h1 className="text-2xl font-semibold tracking-tight">Expenses and income</h1>
+            <EntriesPanel data={data} update={update} />
+            <BudgetPanel data={data} month={month} update={update} />
+          </section>
+        )}
 
         {tab === "monthly" && (
           <section className="space-y-3">
-            <h1 className="text-xl font-semibold">Monthly summary</h1>
-            {monthlySummary(data).length === 0 && <EmptyState text="Nothing logged yet." />}
-            {monthlySummary(data).map((r) => (
+            <h1 className="text-2xl font-semibold tracking-tight">Monthly summary</h1>
+            {summaryRows.length === 0 && <EmptyState text="Nothing logged yet." />}
+            {summaryRows.map((r) => (
               <div key={r.month} className={card}>
                 <div className="font-medium">{formatMonth(r.month)}</div>
-                <div className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+                <div className="mt-2 grid grid-cols-2 gap-2 text-sm md:grid-cols-5">
                   <div>Invoiced<div className="font-semibold">{formatNaira(r.invoicedKobo)}</div></div>
                   <div>Paid<div className="font-semibold">{formatNaira(r.paidKobo)}</div></div>
+                  <div>Other income<div className="font-semibold">{formatNaira(r.otherIncomeKobo)}</div></div>
                   <div>Expenses<div className="font-semibold">{formatNaira(r.expensesKobo)}</div></div>
-                  <div>Profit (cash)<div className="font-semibold">{formatNaira(r.paidKobo - r.expensesKobo)}</div></div>
+                  <div>Profit (cash)<div className={`font-semibold ${r.profitKobo < 0 ? "text-red-600" : ""}`}>{formatNaira(r.profitKobo)}</div></div>
                 </div>
               </div>
             ))}
           </section>
         )}
 
+        {tab === "ask" && (
+          <AskMyBooks data={data} today={today} settings={settings} onSettings={(s) => { saveSettings(s); setSettings(s); }} />
+        )}
+
         {tab === "settings" && (
           <section className="space-y-4">
-            <h1 className="text-xl font-semibold">Data</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
             <div className={card + " space-y-3"}>
+              <h2 className="font-semibold">Currency format</h2>
+              <Field label="Amount style">
+                <select className={inputClass} value={prefs.currency} onChange={(e) => changePrefs({ currency: e.target.value as Currency })}>
+                  <option value="naira">₦1,250.50 (kobo precision)</option>
+                  <option value="naira-whole">NGN 1,251 (whole naira)</option>
+                </select>
+              </Field>
+              <p className="text-xs text-stone-500">Display only. Stored amounts keep full kobo precision.</p>
+            </div>
+            <div className={card + " space-y-3"}>
+              <h2 className="font-semibold">Data</h2>
               <p className="text-sm text-stone-600 dark:text-stone-300">Your data is stored only in this browser. Export a backup regularly.</p>
               <div className="flex flex-wrap gap-2">
                 <button className={btnPrimary} onClick={download}>Export JSON</button>
@@ -197,9 +269,10 @@ export default function App() {
   );
 }
 
-function ClientsPanel({ data, update }: { data: AppData; update: (fn: (d: AppData) => AppData) => void }) {
+function ClientsPanel({ data, update, today }: { data: AppData; update: (fn: (d: AppData) => AppData) => void; today: string }) {
   const [draft, setDraft] = useState({ name: "", email: "", address: "" });
   const [error, setError] = useState("");
+  const [statementFor, setStatementFor] = useState<string | null>(null);
 
   function add() {
     if (!draft.name.trim()) return setError("Name is required.");
@@ -209,9 +282,19 @@ function ClientsPanel({ data, update }: { data: AppData; update: (fn: (d: AppDat
     setError("");
   }
 
+  if (statementFor) {
+    const c = data.clients.find((x) => x.id === statementFor);
+    return (
+      <section className="space-y-3">
+        <button className={btnSecondary} onClick={() => setStatementFor(null)}>Back to clients</button>
+        {c && <ClientStatementView data={data} today={today} />}
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-4">
-      <h1 className="text-xl font-semibold">Clients</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">Clients</h1>
       <div className={card + " grid gap-3 sm:grid-cols-2"}>
         <Field label="Name"><input className={inputClass} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
         <Field label="Email"><input className={inputClass} type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field>
@@ -227,55 +310,13 @@ function ClientsPanel({ data, update }: { data: AppData; update: (fn: (d: AppDat
             <div className="text-sm text-stone-500">{c.email}</div>
             <div className="whitespace-pre-line text-sm text-stone-500">{c.address}</div>
           </div>
-          <button className={btnDanger} onClick={() => update((d) => ({ ...d, clients: d.clients.filter((x) => x.id !== c.id) }))}>Delete</button>
-        </div>
-      ))}
-    </section>
-  );
-}
-
-function ExpensesPanel({ data, update }: { data: AppData; update: (fn: (d: AppData) => AppData) => void }) {
-  const [draft, setDraft] = useState({ date: todayISO(), description: "", category: EXPENSE_CATEGORIES[0] as string, amount: "" });
-  const [error, setError] = useState("");
-
-  function add() {
-    const kobo = parseNairaToKobo(draft.amount);
-    if (!draft.description.trim()) return setError("Add a description.");
-    if (kobo === null || kobo <= 0) return setError("Enter a valid amount in naira.");
-    const e: Expense = { id: newId(), date: draft.date, description: draft.description.trim(), category: draft.category as Expense["category"], amountKobo: kobo };
-    update((d) => ({ ...d, expenses: [e, ...d.expenses] }));
-    setDraft({ ...draft, description: "", amount: "" });
-    setError("");
-  }
-
-  return (
-    <section className="space-y-4">
-      <h1 className="text-xl font-semibold">Expenses</h1>
-      <div className={card + " grid gap-3 sm:grid-cols-2"}>
-        <Field label="Date"><input type="date" className={inputClass} value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} /></Field>
-        <Field label="Amount (₦)"><input inputMode="decimal" className={inputClass} value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} /></Field>
-        <Field label="Description"><input className={inputClass} value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></Field>
-        <Field label="Category">
-          <select className={inputClass} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })}>
-            {EXPENSE_CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-          </select>
-        </Field>
-        <div className="sm:col-span-2"><button className={btnPrimary} onClick={add}>Add expense</button></div>
-        {error && <div role="alert" className="text-sm text-red-600 sm:col-span-2">{error}</div>}
-      </div>
-      {data.expenses.length === 0 && <EmptyState text="No expenses logged yet." />}
-      {data.expenses.map((e) => (
-        <div key={e.id} className={card + " flex items-center justify-between gap-2"}>
-          <div>
-            <div className="font-medium">{e.description}</div>
-            <div className="text-sm text-stone-500">{formatDate(e.date)} · {e.category}</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">{formatNaira(e.amountKobo)}</span>
-            <button className={btnDanger} onClick={() => update((d) => ({ ...d, expenses: d.expenses.filter((x) => x.id !== e.id) }))}>Delete</button>
+          <div className="flex flex-col gap-2">
+            <button className={btnSecondary} onClick={() => setStatementFor(c.id)}>Statement</button>
+            <button className={btnDanger} onClick={() => update((d) => ({ ...d, clients: d.clients.filter((x) => x.id !== c.id) }))}>Delete</button>
           </div>
         </div>
       ))}
     </section>
   );
 }
+

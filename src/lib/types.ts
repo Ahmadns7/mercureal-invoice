@@ -47,11 +47,27 @@ export interface Expense {
   description: string;
   category: ExpenseCategory;
   amountKobo: number;
+  /** Recurring entries count in every month from their start date onward. */
+  recurring?: boolean;
 }
+
+/** Income that is not an invoice payment (retainers, grants, etc.). */
+export interface OtherIncome {
+  id: string;
+  date: string;
+  description: string;
+  amountKobo: number;
+  recurring?: boolean;
+}
+
+/** Monthly cap per expense category, in kobo. Missing or 0 means no cap. */
+export type Budgets = Partial<Record<ExpenseCategory, number>>;
 
 export interface AppData {
   version: 1;
   clients: Client[];
   invoices: Invoice[];
   expenses: Expense[];
+  incomes: OtherIncome[];
+  budgets: Budgets;
 }
