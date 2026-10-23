@@ -1,12 +1,19 @@
 import { invoiceTotals } from "./money";
 import { addMonths, monthKey } from "./dates";
-import { EXPENSE_CATEGORIES, type AppData, type ExpenseCategory, type Invoice } from "./types";
+import { invoiceCurrency, toNairaKobo } from "./fx";
+import { EXPENSE_CATEGORIES, type AppData, type Currency, type ExpenseCategory, type FxRates, type Invoice } from "./types";
 
+/** Invoice total in its own currency's minor units (kobo for NGN, cents for USD). */
 export function invoiceTotalKobo(inv: Invoice): number {
   return invoiceTotals(
     inv.items.map((i) => ({ quantity: i.quantity, unitPriceKobo: i.unitPriceKobo })),
     inv.withVat,
   ).totalKobo;
+}
+
+/** Invoice total converted to naira kobo at the saved rates. Equal to invoiceTotalKobo for NGN invoices. */
+export function invoiceNgnKobo(inv: Invoice, fxRates?: FxRates): number {
+  return toNairaKobo(invoiceTotalKobo(inv), invoiceCurrency(inv), fxRates);
 }
 
 /** Recurring entries count in every month from their own month onward. */
@@ -27,6 +34,7 @@ export interface DashboardTotals {
 /**
  * Totals for the dashboard. Profit is cash basis for `today`'s month:
  * invoice payments plus other income received, minus expenses, all for that month.
+ * Foreign-currency invoices are shown in naira at the saved rates.
  */
 export function dashboardTotals(data: AppData, today: string): DashboardTotals {
   const month = monthKey(today);
@@ -35,7 +43,7 @@ export function dashboardTotals(data: AppData, today: string): DashboardTotals {
   let outstanding = 0;
   let paidThisMonth = 0;
   for (const inv of data.invoices) {
-    const total = invoiceTotalKobo(inv);
+    const total = invoiceNgnKobo(inv, data.fxRates);
     if (monthKey(inv.issueDate) === month) invoiced += total;
     if (inv.status === "paid") {
       paid += total;
@@ -89,8 +97,9 @@ export function monthlySummary(data: AppData, _today?: string): MonthRow[] {
   for (const m of keys) rows.set(m, { month: m, invoicedKobo: 0, paidKobo: 0, otherIncomeKobo: 0, expensesKobo: 0, profitKobo: 0 });
   const row = (m: string) => rows.get(m)!;
   for (const inv of data.invoices) {
-    row(monthKey(inv.issueDate)).invoicedKobo += invoiceTotalKobo(inv);
-    if (inv.status === "paid" && inv.paidDate) row(monthKey(inv.paidDate)).paidKobo += invoiceTotalKobo(inv);
+    const ngn = invoiceNgnKobo(inv, data.fxRates);
+    row(monthKey(inv.issueDate)).invoicedKobo += ngn;
+    if (inv.status === "paid" && inv.paidDate) row(monthKey(inv.paidDate)).paidKobo += ngn;
   }
   for (const e of data.expenses) {
     for (const m of keys) if (appliesIn(e.date, e.recurring, m)) row(m).expensesKobo += e.amountKobo;
@@ -130,3 +139,5 @@ export function monthRows(data: AppData, months: string[]): MonthRow[] {
   const all = new Map(monthlySummary(data).map((r) => [r.month, r]));
   return months.map((m) => all.get(m) ?? { month: m, invoicedKobo: 0, paidKobo: 0, otherIncomeKobo: 0, expensesKobo: 0, profitKobo: 0 });
 }
+
+export type { Currency };

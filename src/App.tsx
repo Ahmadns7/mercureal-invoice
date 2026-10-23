@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { BankImportPanel } from "./components/BankImport";
+import { ReceiptPanel } from "./components/Receipt";
+import { TaxPanel } from "./components/Tax";
 import { InvoiceForm } from "./components/InvoiceForm";
 import { InvoiceView } from "./components/InvoiceView";
 import { AskMyBooks } from "./components/AskMyBooks";
@@ -13,18 +16,22 @@ import { addMonths, daysBetween, formatDate, formatMonth, isOverdue, monthKey, t
 import { formatNaira, setDisplayFormat } from "./lib/money";
 import { paymentMethodLabel } from "./lib/labels";
 import { categoryTotals, dashboardTotals, invoiceTotalKobo, monthlySummary } from "./lib/summary";
+import { cloneTemplate, hasGeneratedFor, templatesDue } from "./lib/recurring";
+import { saveLastExport, backupDue, daysSinceExport, loadLastExport } from "./lib/backup";
 import { exportJSON, parseImport } from "./lib/storage";
 import { PAYMENT_METHODS, type AppData, type Client, type Invoice, type PaymentMethod } from "./lib/types";
 import { newId } from "./lib/ids";
 import { loadSettings, saveSettings, type AssistantSettings } from "./lib/assistant/llm";
 
-type Tab = "home" | "invoices" | "clients" | "expenses" | "monthly" | "ask" | "settings";
+type Tab = "home" | "invoices" | "clients" | "expenses" | "monthly" | "tax" | "import" | "ask" | "settings";
 const TABS: { id: Tab; label: string }[] = [
   { id: "home", label: "Home" },
   { id: "invoices", label: "Invoices" },
   { id: "clients", label: "Clients" },
   { id: "expenses", label: "Expenses" },
   { id: "monthly", label: "Monthly" },
+  { id: "tax", label: "Tax" },
+  { id: "import", label: "Import" },
   { id: "ask", label: "Ask my books" },
   { id: "settings", label: "Settings" },
 ];
@@ -53,6 +60,11 @@ export default function App() {
   const [viewing, setViewing] = useState<string | null>(null);
   const [filter, setFilter] = useState<"all" | "overdue">("all");
   const [importError, setImportError] = useState("");
+  const [nowMs] = useState(() => Date.now());
+  const lastExport = useMemo(() => loadLastExport(), []);
+  const hasData = data.invoices.length + data.expenses.length + data.incomes.length + data.clients.length > 0;
+  const showBackupBanner = backupDue(lastExport, nowMs, hasData);
+  const daysSince = daysSinceExport(lastExport, nowMs);
 
   const today = todayISO();
   const month = monthKey(today);
@@ -86,7 +98,22 @@ export default function App() {
     a.download = `mercureal-invoice-${today}.json`;
     a.click();
     URL.revokeObjectURL(url);
+    saveLastExport(new Date().toISOString());
   }
+
+  function generateTemplate(id: string) {
+    const tpl = data.invoices.find((i) => i.id === id);
+    if (!tpl) return;
+    const monthStr = monthKey(today);
+    if (hasGeneratedFor(data.invoices, id, monthStr)) return;
+    const inv = cloneTemplate(tpl, data.invoices, today);
+    update((d) => ({ ...d, invoices: [inv, ...d.invoices] }));
+  }
+
+  function toggleTemplate(id: string, on: boolean) {
+    update((d) => ({ ...d, invoices: d.invoices.map((i) => (i.id === id ? { ...i, monthlyTemplate: on } : i)) }));
+  }
+
 
   async function importFile(file: File) {
     const parsed = parseImport(await file.text());
@@ -122,6 +149,16 @@ export default function App() {
       </header>
 
       <main className="mx-auto max-w-5xl space-y-4 p-4">
+        {showBackupBanner && (
+          <div className="no-print flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-300/60 bg-amber-50/80 p-3 text-sm dark:border-amber-500/30 dark:bg-amber-950/40">
+            <span>
+              {daysSince === null ? "you have not exported a backup yet." : `it has been ${daysSince} days since your last backup.`} keep a copy of your data safe.
+            </span>
+            <button type="button" onClick={download} className="rounded-lg bg-stone-900 px-3 py-1.5 text-white dark:bg-white dark:text-stone-900">
+              export backup
+            </button>
+          </div>
+        )}
         {tab === "home" && (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -205,6 +242,8 @@ export default function App() {
           </section>
         )}
 
+        {tab === "tax" && <TaxPanel data={data} today={today} />}
+        {tab === "import" && <div className="space-y-4"><BankImportPanel data={data} update={update} today={today} /><ReceiptPanel data={data} update={update} today={today} /></div>}
         {tab === "clients" && <ClientsPanel data={data} update={update} today={today} />}
         {tab === "expenses" && (
           <section className="space-y-6">
@@ -214,6 +253,30 @@ export default function App() {
           </section>
         )}
 
+        {tab === "monthly" && (
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Recurring invoices</h2>
+            <p className="text-sm text-stone-500">Mark an invoice as a monthly template, then generate it once per month.</p>
+            {data.invoices.filter((i) => i.monthlyTemplate).length === 0 && <p className="text-sm">no templates yet. open an invoice and mark it as a monthly template.</p>}
+            {templatesDue(data.invoices, monthKey(today)).length > 0 && (
+              <p className="rounded-lg bg-amber-50 p-2 text-sm dark:bg-amber-950/40">{templatesDue(data.invoices, monthKey(today)).length} template(s) still need generating this month.</p>
+            )}
+            {data.invoices.filter((i) => i.monthlyTemplate).map((tpl) => {
+              const done = hasGeneratedFor(data.invoices, tpl.id, monthKey(today));
+              return (
+                <div key={tpl.id} className="flex items-center justify-between gap-2 rounded-lg border border-stone-200 p-2 text-sm dark:border-stone-700">
+                  <span>{tpl.number} (template)</span>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => toggleTemplate(tpl.id, false)} className="rounded border px-2 py-1 text-xs">unmark</button>
+                    <button type="button" disabled={done} onClick={() => generateTemplate(tpl.id)} className="rounded bg-stone-900 px-2 py-1 text-xs text-white disabled:opacity-40 dark:bg-white dark:text-stone-900">
+                      {done ? "done this month" : "generate this month"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+        )}
         {tab === "monthly" && (
           <section className="space-y-3">
             <h1 className="text-2xl font-semibold tracking-tight">Monthly summary</h1>
