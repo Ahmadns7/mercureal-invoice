@@ -172,10 +172,11 @@ export function detectColumns(rows: string[][]): { headerIndex: number; columns:
     const date = heads.findIndex((h) => DATE_HEADER.test(h) && !/value/.test(h));
     const dateCol = date >= 0 ? date : find(DATE_HEADER);
     const narration = find(NARRATION_HEADER);
-    const debit = find(/^(debit|withdrawal|dr\b|money out|debit amount|amount debit|paid out)/);
-    const credit = find(/^(credit|deposit|cr\b|money in|credit amount|amount credit|paid in)/);
-    const amount = find(/^(amount|transaction amount|value|txn amount)$/);
     const type = find(/^(type|dr\/cr|drcr|flag|direction|cr\/dr|debit\/credit|transaction type)$/);
+    const findSide = (re: RegExp) => heads.findIndex((h, i) => i !== type && re.test(h));
+    const debit = findSide(/^(debit|withdrawal|dr\b|money out|debit amount|amount debit|paid out)/);
+    const credit = findSide(/^(credit|deposit|cr\b|money in|credit amount|amount credit|paid in)/);
+    const amount = find(/^(amount|transaction amount|value|txn amount)$/);
     if (dateCol < 0 || narration < 0) continue;
     if (debit < 0 && credit < 0 && amount < 0) continue;
     return {

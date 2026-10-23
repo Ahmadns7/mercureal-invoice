@@ -1,8 +1,9 @@
 import { useState } from "react";
 import type { AppData, ExpenseCategory } from "../lib/types";
 import { EXPENSE_CATEGORIES } from "../lib/types";
-import { parseBankStatement, type BankRow, prefillRows, learnKeyword, upsertMapping } from "../lib/bankImport";
+import { type BankRow, prefillRows, learnKeyword, upsertMapping } from "../lib/bankImport";
 import { newId } from "../lib/ids";
+import { parseStatementFile } from "../lib/statementFile";
 
 interface Props {
   data: AppData;
@@ -12,7 +13,7 @@ interface Props {
 
 /** Persist a bank's narration-to-category mapping, keyed by bank name. */
 function bankName(file: File): string {
-  return file.name.replace(/\.csv$/i, "").replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase() || "statement";
+  return file.name.replace(/\.(csv|xlsx|xls|docx|doc|pdf)$/i, "").replace(/[^a-z0-9]+/gi, " ").trim().toLowerCase() || "statement";
 }
 
 export function BankImportPanel({ data, update }: Props) {
@@ -24,11 +25,16 @@ export function BankImportPanel({ data, update }: Props) {
   async function onFile(file: File) {
     setError("");
     setSkipped(0);
-    const text = await file.text();
-    const parsed = parseBankStatement(text);
+    let parsed;
+    try {
+      parsed = await parseStatementFile(file);
+    } catch (e) {
+      setRows(null);
+      return setError(e instanceof Error ? e.message : "Could not read this file.");
+    }
     if (!parsed) {
       setRows(null);
-      return setError("Could not find date, narration and amount columns in this file. Check it is a bank CSV export.");
+      return setError("Could not find date, narration and amount columns in this file. Check it is a bank statement export (CSV, Excel, Word or a text PDF).");
     }
     const name = bankName(file);
     setBank(name);
@@ -70,9 +76,9 @@ export function BankImportPanel({ data, update }: Props) {
 
   return (
     <section className="space-y-3 rounded-xl border border-stone-200 p-3 dark:border-stone-700">
-      <h2 className="text-lg font-semibold">Import bank statement (CSV)</h2>
-      <p className="text-xs text-stone-500">Debits become expenses, credits become other income. Repeat imports from the same bank remember your categories.</p>
-      <input type="file" accept=".csv,text/csv" aria-label="Choose bank CSV" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
+      <h2 className="text-lg font-semibold">Import bank statement</h2>
+      <p className="text-xs text-stone-500">CSV, Excel, Word or text-PDF. Debits become expenses, credits become other income. Repeat imports from the same bank remember your categories.</p>
+      <input type="file" accept=".csv,.xlsx,.xls,.docx,.doc,.pdf,text/csv,application/pdf" aria-label="Choose bank CSV" onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])} className="text-sm" />
       {error && <p className="text-sm text-red-600">{error}</p>}
       {rows && (
         <>

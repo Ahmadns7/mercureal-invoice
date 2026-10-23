@@ -23,6 +23,7 @@ import { exportJSON, parseImport } from "./lib/storage";
 import { PAYMENT_METHODS, type AppData, type Client, type FxRates, type Invoice, type PaymentMethod } from "./lib/types";
 import { newId } from "./lib/ids";
 import { loadSettings, saveSettings, type AssistantSettings } from "./lib/assistant/llm";
+import { loadLogo, resizeImageFile, saveLogo } from "./lib/logo";
 
 type Tab = "home" | "invoices" | "clients" | "expenses" | "monthly" | "tax" | "import" | "ask" | "settings";
 const TABS: { id: Tab; label: string }[] = [
@@ -321,6 +322,7 @@ export default function App() {
               </Field>
               <p className="text-xs text-stone-500">Display only. Stored amounts keep full kobo precision.</p>
             </div>
+            <LogoSettings />
             <div className={card + " space-y-3"}>
               <h2 className="font-semibold">Naira rates for foreign invoices</h2>
               <p className="text-xs text-stone-500">Naira per 1 unit. Used for naira-equivalent totals and VAT reports. Update these when the rate moves.</p>
@@ -425,3 +427,41 @@ function ClientsPanel({ data, update, today }: { data: AppData; update: (fn: (d:
   );
 }
 
+
+/** Upload, replace or remove the invoice logo. Stored as a resized PNG data URL in localStorage. */
+function LogoSettings() {
+  const [logo, setLogo] = useState<string | null>(() => loadLogo());
+  const [msg, setMsg] = useState("");
+  async function onPick(file: File) {
+    setMsg("");
+    try {
+      const url = await resizeImageFile(file, 512);
+      if (!saveLogo(url)) {
+        setMsg("That logo is too large to store. Try a smaller image.");
+        return;
+      }
+      setLogo(url);
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Could not use that image.");
+    }
+  }
+  function remove() {
+    saveLogo(null);
+    setLogo(null);
+  }
+  return (
+    <div className={card + " space-y-3"}>
+      <h2 className="font-semibold">Invoice logo</h2>
+      <p className="text-xs text-stone-500">Shown at the top of printed and PDF invoices. Stored only in this browser.</p>
+      {logo && <img src={logo} alt="Current invoice logo" className="h-16 w-16 rounded-full object-contain bg-white" />}
+      <div className="flex flex-wrap gap-2">
+        <label className={btnSecondary + " cursor-pointer"}>
+          {logo ? "Replace logo" : "Upload logo"}
+          <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label="Choose invoice logo" onChange={(e) => { const f = e.target.files?.[0]; if (f) onPick(f); e.target.value = ""; }} />
+        </label>
+        {logo && <button type="button" className={btnDanger} onClick={remove}>Remove logo</button>}
+      </div>
+      {msg && <div role="alert" className="text-sm text-red-600">{msg}</div>}
+    </div>
+  );
+}

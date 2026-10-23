@@ -4,8 +4,27 @@ import { formatMoney } from "../lib/fx";
 import { paymentMethodLabel } from "../lib/labels";
 import { invoiceCurrency } from "../lib/fx";
 import { btnPrimary, btnSecondary } from "./ui";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { AppData, Invoice } from "../lib/types";
+import QRCode from "qrcode";
+import { qrPayload } from "../lib/qr";
+import { loadLogo } from "../lib/logo";
+
+/** Renders the invoice QR as a PNG data URL (~120px on screen and print). */
+export function InvoiceQr({ invoice }: { invoice: Invoice }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const payload = qrPayload(invoice);
+  // Re-render the QR only when the encoded text changes.
+  useEffect(() => {
+    let live = true;
+    QRCode.toDataURL(payload, { width: 240, margin: 1, errorCorrectionLevel: "M" })
+      .then((u) => live && setSrc(u))
+      .catch(() => live && setSrc(null));
+    return () => { live = false; };
+  }, [payload]);
+  if (!src) return null;
+  return <img src={src} alt="Invoice QR code" width={120} height={120} className="h-[120px] w-[120px]" />;
+}
 
 export function PayButtons({ link }: { link: string }) {
   const [copied, setCopied] = useState(false);
@@ -31,10 +50,12 @@ export function InvoiceView({ invoice, data }: { invoice: Invoice; data: AppData
   const totals = invoiceTotals(invoice.items, invoice.withVat);
   const cur = invoiceCurrency(invoice);
   const money = (minor: number) => formatMoney(minor, cur);
+  const logo = loadLogo();
   return (
-    <div id="print-area" className="rounded-xl bg-white p-6 text-stone-900">
+    <div id="print-area" className="relative overflow-hidden rounded-xl bg-white p-6 text-stone-900">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          {logo && <img src={logo} alt="" className="mb-2 h-14 w-14 object-contain" />}
           <h2 className="text-2xl font-bold">INVOICE</h2>
           <div className="text-sm text-stone-600">{invoice.number}</div>
         </div>
@@ -80,6 +101,12 @@ export function InvoiceView({ invoice, data }: { invoice: Invoice; data: AppData
         <div className="flex justify-between border-t border-stone-300 pt-1 font-semibold">
           <span>Total</span><span>{money(totals.totalKobo)}</span>
         </div>
+      </div>
+      <div className="mt-6 flex flex-wrap items-end justify-between gap-4">
+        <div className="text-xs text-stone-500">
+          {invoice.paymentLink ? "Scan to pay" : "Scan for invoice details"}
+        </div>
+        <InvoiceQr invoice={invoice} />
       </div>
       {invoice.paymentLink && invoice.status !== "paid" && <PayButtons link={invoice.paymentLink} />}
       {invoice.notes && <div className="mt-6 whitespace-pre-line text-sm text-stone-700">{invoice.notes}</div>}
